@@ -325,6 +325,7 @@ Remove-Item -Recurse -Force _tmp_sqli
 
 ```
 请从 https://github.com/0671/ai-sec-code-review 仓库的 cursor/sqli/ 目录下载全部文件（commands/、skills/、rules/），放到当前项目的 .cursor/ 目录下，保持子目录结构。
+注意：不要出现 sqli 目录名称。
 ```
 
 Agent 会自动执行 shell 命令或逐文件 fetch 完成导入。
