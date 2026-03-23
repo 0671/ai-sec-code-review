@@ -1,0 +1,32 @@
+---
+description: 当编辑或审查包含数据库查询的文件时自动激活，提醒 SQL 注入风险
+globs:
+  - "**/services/**/*.ts"
+  - "**/services/**/*.js"
+  - "**/repositories/**/*.ts"
+  - "**/models/**/*.ts"
+  - "**/dao/**/*.ts"
+  - "**/controllers/**/*.ts"
+  - "**/routes/**/*.ts"
+---
+
+# SQL 注入防护提醒
+
+当你在匹配文件中编写或审查代码时，请遵循以下约束：
+
+## 绝对禁止
+1. 将任何来自 `req.query`、`req.params`、`req.body`、`req.headers` 的值通过字符串拼接或模板字符串插值直接嵌入 SQL 语句。
+2. 将用户输入传入 `Sequelize.literal()`、`Sequelize.fn()` 的字符串参数、`knex.raw()`、`$queryRawUnsafe()`。
+3. 用用户输入控制 ORDER BY、表名、列名而不经过白名单校验。
+
+## 必须遵循
+1. 所有用户输入进入 SQL 值位置时，使用参数绑定（`replacements`、`bind`、`$1`、`?`）。
+2. 动态标识符（排序字段、列名）必须通过白名单枚举校验。
+3. LIKE 查询中的用户输入必须转义 `%`、`_`、`\` 后再作为绑定参数传入。
+4. 新增任何 `sequelize.query()`、`.raw()`、`$queryRaw` 调用时，在注释中标注数据来源。
+
+## 审查提示
+当你看到以下模式时，主动提醒用户注意 SQL 注入风险：
+- 模板字符串内含 SQL 关键字（SELECT/INSERT/UPDATE/DELETE）且有 `${}` 插值
+- `.query()` 调用只有一个参数（无 options/replacements）
+- `literal()` 内含变量而非纯字符串常量
