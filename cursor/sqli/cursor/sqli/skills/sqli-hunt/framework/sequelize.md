@@ -16,7 +16,7 @@
 | `SEQ-COL-DYNAMIC` | `Sequelize\.col\s*\(\s*[a-zA-Z_]` | 中 | `Sequelize.col()` 传入变量（动态列名） |
 | `SEQ-JSON-PATH` | `\$\w+\.\.\$` | 中 | JSON 路径表达式中可能存在 CVE-2026-30951 风险 |
 | `SEQ-QUERY-NO-BIND` | `sequelize\.query\s*\([^,]+\)\s*;` | 低 | `sequelize.query()` 调用缺少第二个参数（无 replacements/bind） |
-| `SEQ-ORDER-DYN` | `order:\s*\[\s*\[.*\$\{` | 中 | 动态 ORDER BY 通过数组构建 |
+| `SEQ-ORDER-DYN` | `order:\s*\[\s*\[.*\$\{` | 信息 | 动态 ORDER BY 通过 ORM 数组构建。**注意**：Sequelize `findAll({ order })` 对字符串自动 `quoteIdentifier` + 方向白名单，通常安全；但若经 `literal()` 进入则无保护，需按 `SEQ-LITERAL-TMPL` 处理。建议添加白名单作纵深防御 |
 | `SEQ-ATTR-DYN` | `attributes:\s*\[.*\$\{` | 中 | 动态 attributes 选择 |
 
 ---
@@ -84,14 +84,37 @@ await User.findAll({ where: { name: { [Op.like]: `%${userInput}%` } } });
 ### 2.4 动态 ORDER BY
 
 ```typescript
-// 🔴 危险：用户输入直接进入 order
+// ✅ 实际安全（但不推荐）：用户输入进入 findAll order 字符串数组
+// Sequelize 内部 quote() 方法会：
+//   1. 对列名调用 quoteIdentifier() → "userInput"（双引号包裹，内部 " 转义为 ""）
+//   2. 对方向值与 validOrderOptions 白名单比对（仅允许 ASC/DESC 等 8 个值）
+// 因此不构成 SQL 注入，但会暴露内部列名信息，建议仍添加白名单
 await User.findAll({ order: [[userInput, 'ASC']] });
+// 生成: ORDER BY "userInput" ASC — 注入尝试被引号转义
 
-// ✅ 安全：白名单校验
+// 🔴 危险：用户输入经 literal() 进入 order — literal 绕过 quoteIdentifier
+await User.findAll({ order: [[literal(`${userInput}`), 'ASC']] });
+// literal() 输出直接嵌入 SQL，不做任何转义
+
+// 🔴 危险：用户输入拼入 sequelize.query() 的 ORDER BY — 原生 SQL 无保护
+await sequelize.query(`SELECT * FROM users ORDER BY ${userInput}`);
+// 模板字符串直接拼接，无 quote 无 validate
+
+// ✅ 安全（推荐）：白名单校验
 const ALLOWED = ['name', 'created_at', 'email'];
 const field = ALLOWED.includes(userInput) ? userInput : 'created_at';
 await User.findAll({ order: [[field, 'ASC']] });
 ```
+
+> **Sequelize v6 内部保护机制参考**（源码 `query-generator.js` 的 `quote()` 方法）：
+> ```javascript
+> const validOrderOptions = [
+>   'ASC', 'DESC', 'ASC NULLS LAST', 'DESC NULLS LAST',
+>   'ASC NULLS FIRST', 'DESC NULLS FIRST', 'NULLS FIRST', 'NULLS LAST'
+> ];
+> // 字符串列名 → quoteIdentifiers() → "col_name"
+> // 字符串方向 → validOrderOptions.indexOf(item.toUpperCase()) → 匹配则 literal，不匹配则 quoteIdentifier
+> ```
 
 ---
 
