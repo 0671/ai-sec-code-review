@@ -1,0 +1,57 @@
+---
+description: 当编辑或审查 PHP 数据库查询代码时自动激活，提醒 SQL 注入风险
+globs:
+  - "**/app/**/*.php"
+  - "**/src/**/*.php"
+  - "**/controllers/**/*.php"
+  - "**/Controllers/**/*.php"
+  - "**/models/**/*.php"
+  - "**/Models/**/*.php"
+  - "**/services/**/*.php"
+  - "**/Services/**/*.php"
+  - "**/repositories/**/*.php"
+  - "**/Repositories/**/*.php"
+  - "**/Http/**/*.php"
+  - "**/routes/**/*.php"
+  - "**/database/**/*.php"
+  - "**/includes/**/*.php"
+  - "**/wp-content/**/*.php"
+---
+
+# SQL 注入防护提醒 — PHP
+
+当你在匹配文件中编写或审查代码时，请遵循以下约束：
+
+## 绝对禁止
+
+1. 将 `$_GET`、`$_POST`、`$_REQUEST`、`$_COOKIE`、`$request->input()` 等用户输入通过**双引号插值、点拼接、sprintf** 直接嵌入 SQL 语句
+2. 使用 `$pdo->query($sql)` 或 `$mysqli->query($sql)` 执行含用户输入的 SQL（应使用 `prepare` + `execute`）
+3. 使用 `mysqli_multi_query()` 执行含用户输入的 SQL（支持多语句，极其危险）
+4. 使用 `$wpdb->query()` 不经 `$wpdb->prepare()` 处理用户输入
+5. 使用 `DB::unprepared()` 处理含用户输入的 SQL
+6. 使用 `addslashes()` 或 `htmlspecialchars()` 作为 SQL 注入防护（无效）
+7. 使用已废弃的 `mysql_*` 函数族
+
+## 必须遵循
+
+1. PDO 使用 `prepare()` + `execute()`：`$stmt = $pdo->prepare("... WHERE name = :name"); $stmt->execute(['name' => $name]);`
+2. MySQLi 使用 `prepare()` + `bind_param()`
+3. WordPress 使用 `$wpdb->prepare()`：`$wpdb->prepare("... WHERE id = %d", $id)`
+4. Laravel 的 `whereRaw()` / `selectRaw()` 等 Raw 方法必须传入绑定参数数组
+5. 动态列名/排序使用 `in_array()` 白名单校验
+6. Laravel 的 `orderBy()` 第一个参数（列名）必须白名单校验
+
+## 审查触发模式
+
+当你看到以下代码模式时，**主动提醒**用户注意 SQL 注入风险：
+
+- `"SELECT ... $` 或 `"INSERT ... $` 等（双引号内 SQL + 变量插值）
+- `'SELECT ... ' .` 或 `'INSERT ... ' .`（点拼接 SQL）
+- `sprintf("SELECT` / `sprintf("INSERT`（sprintf 格式化 SQL）
+- `$pdo->query(` 或 `$mysqli->query(` 后跟含变量的字符串
+- `mysqli_multi_query(` 出现
+- `$wpdb->query(` 且同行/上下文无 `$wpdb->prepare`
+- `DB::raw(` 后跟含 `$` 变量的字符串
+- `->whereRaw(` / `->orderByRaw(` 后无第二个绑定参数数组
+- `DB::unprepared(` 出现
+- `mysql_query(` 出现（已废弃 API）

@@ -1,0 +1,55 @@
+---
+description: 当编辑或审查 Node.js/TypeScript 数据库查询代码时自动激活，提醒 SQL 注入风险
+globs:
+  - "**/services/**/*.ts"
+  - "**/services/**/*.js"
+  - "**/controllers/**/*.ts"
+  - "**/controllers/**/*.js"
+  - "**/repositories/**/*.ts"
+  - "**/repositories/**/*.js"
+  - "**/models/**/*.ts"
+  - "**/models/**/*.js"
+  - "**/dao/**/*.ts"
+  - "**/dao/**/*.js"
+  - "**/routes/**/*.ts"
+  - "**/routes/**/*.js"
+  - "**/resolvers/**/*.ts"
+  - "**/resolvers/**/*.js"
+  - "**/handlers/**/*.ts"
+  - "**/handlers/**/*.js"
+  - "**/api/**/*.ts"
+  - "**/api/**/*.js"
+  - "**/server/**/*.ts"
+  - "**/lib/**/*.ts"
+---
+
+# SQL 注入防护提醒 — Node.js / TypeScript
+
+当你在匹配文件中编写或审查代码时，请遵循以下约束：
+
+## 绝对禁止
+
+1. 将来自 `req.query`、`req.params`、`req.body`、`req.headers`、`ctx.query`、`ctx.request.body`、`args`（GraphQL）的值通过**字符串拼接或模板字符串插值**直接嵌入 SQL 语句
+2. 将用户输入传入 `Sequelize.literal()`、`Sequelize.fn()` 的字符串参数
+3. 将用户输入传入 `knex.raw()`、`.whereRaw()`、`.orderByRaw()` 等 Raw 方法而不使用绑定参数
+4. 使用 `$queryRawUnsafe()` 或 `$executeRawUnsafe()` 处理含用户输入的 SQL
+5. 用用户输入控制 ORDER BY、表名、列名而不经过白名单校验
+
+## 必须遵循
+
+1. 所有用户输入进入 SQL 值位置时，使用参数绑定（`replacements`、`bind`、`$1`、`?`、`:name`）
+2. 动态标识符（排序字段、列名、表名）必须通过白名单枚举校验
+3. LIKE 查询中的用户输入必须转义 `%`、`_`、`\` 后再作为绑定参数传入
+4. 使用 Prisma 原生查询时，使用 `Prisma.sql` 标签模板而非 `$queryRawUnsafe`
+5. 新增任何 `sequelize.query()`、`knex.raw()`、`$queryRaw` 调用时，在代码注释中标注数据来源
+
+## 审查触发模式
+
+当你看到以下代码模式时，**主动提醒**用户注意 SQL 注入风险：
+
+- 模板字符串内含 SQL 关键字（SELECT/INSERT/UPDATE/DELETE）且有 `${}` 插值
+- `.query()` / `.raw()` 调用只有一个参数（无 options/replacements）
+- `Sequelize.literal()` 内含变量而非纯字符串常量
+- `$queryRawUnsafe` 或 `$executeRawUnsafe` 出现在代码中
+- TypeORM `QueryBuilder` 的 `.where()` / `.orderBy()` 使用字符串拼接
+- `ORDER BY ${variable}` 模式（动态排序无白名单）

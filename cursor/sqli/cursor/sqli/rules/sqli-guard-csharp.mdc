@@ -1,0 +1,64 @@
+---
+description: 当编辑或审查 C#/.NET 数据库查询代码时自动激活，提醒 SQL 注入风险
+globs:
+  - "**/Controllers/**/*.cs"
+  - "**/Services/**/*.cs"
+  - "**/Repositories/**/*.cs"
+  - "**/Data/**/*.cs"
+  - "**/Models/**/*.cs"
+  - "**/Handlers/**/*.cs"
+  - "**/Queries/**/*.cs"
+  - "**/Commands/**/*.cs"
+  - "**/Infrastructure/**/*.cs"
+  - "**/Persistence/**/*.cs"
+  - "**/Dal/**/*.cs"
+  - "**/Hubs/**/*.cs"
+  - "**/Pages/**/*.cs"
+  - "**/Areas/**/*.cs"
+---
+
+# SQL 注入防护提醒 — C# / .NET
+
+当你在匹配文件中编写或审查代码时，请遵循以下约束：
+
+## 绝对禁止
+
+1. 将来自 `[FromQuery]`、`[FromBody]`、`[FromRoute]`、`Request.Query`、`Request.Form` 的值通过**字符串插值（$""）、+ 拼接、String.Format** 嵌入 SQL
+2. 将 `$"..."` 插值字符串赋值给 `string` 变量后再传入 `FromSqlRaw()` 或 `ExecuteSqlRaw()`（丢失 FormattableString 类型信息，参数化失效）
+3. 使用 `SqlCommand` 或 `IDbCommand` 的 `CommandText` 属性直接拼接用户输入
+4. 使用 Dapper 的 `Query<T>()` / `Execute()` 时通过 `$""` 或 `+` 拼接 SQL
+
+## 必须遵循
+
+1. EF Core 原生查询优先使用 `FromSqlInterpolated()`（直接传入 `$"..."` 会自动参数化）
+2. EF Core `FromSqlRaw()` 使用 `{0}` 占位符 + 参数列表
+3. Dapper 使用匿名对象参数：`connection.Query<T>("... WHERE Name = @Name", new { Name = name })`
+4. ADO.NET 使用 `SqlParameter`：`cmd.Parameters.Add("@name", SqlDbType.NVarChar).Value = name`
+5. 动态排序/列名使用白名单 + `Dictionary<string, string>` 映射
+6. 使用 `int.TryParse()` / `Guid.TryParse()` 验证数值/ID 类型输入
+
+## 关键陷阱提醒
+
+**FormattableString vs string**：以下代码看起来安全但实际危险：
+```csharp
+// 🔴 危险：var 推导为 string，插值已求值
+var sql = $"SELECT * FROM Users WHERE Id = {id}";
+context.Users.FromSqlRaw(sql);
+
+// ✅ 安全：直接传入 FormattableString
+context.Users.FromSqlInterpolated($"SELECT * FROM Users WHERE Id = {id}");
+```
+
+## 审查触发模式
+
+当你看到以下代码模式时，**主动提醒**用户注意 SQL 注入风险：
+
+- `$"SELECT` / `$"INSERT` / `$"UPDATE` / `$"DELETE`（字符串插值含 SQL）
+- `"SELECT ... " +` 或 `String.Format("SELECT`（字符串拼接/格式化 SQL）
+- `FromSqlRaw($"` 出现（$"" 先赋值给 string 后传入）
+- `ExecuteSqlRaw($"` 出现
+- `CommandText = $"` 或 `CommandText = "..." +`
+- `.Query<` 后跟 `$"` 或 `"..." +`（Dapper）
+- `StringBuilder` 构建含 SQL 关键字的字符串
+- `connection.Query(` 后跟插值或拼接
+- Dynamic LINQ 的 `.Where(userInput)` / `.OrderBy(userInput)`

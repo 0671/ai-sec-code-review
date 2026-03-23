@@ -1,0 +1,50 @@
+---
+description: 当编辑或审查 Java 数据库查询代码时自动激活，提醒 SQL 注入风险
+globs:
+  - "**/src/main/java/**/*.java"
+  - "**/src/main/kotlin/**/*.kt"
+  - "**/src/main/resources/**/*Mapper.xml"
+  - "**/mapper/**/*.java"
+  - "**/mapper/**/*.xml"
+  - "**/repository/**/*.java"
+  - "**/dao/**/*.java"
+  - "**/service/**/*.java"
+  - "**/controller/**/*.java"
+  - "**/provider/**/*.java"
+---
+
+# SQL 注入防护提醒 — Java
+
+当你在匹配文件中编写或审查代码时，请遵循以下约束：
+
+## 绝对禁止
+
+1. 在 MyBatis XML Mapper 中对来自 HTTP 请求的参数使用 `${}` 替换（应使用 `#{}`）
+2. 在 `@Select`、`@Insert`、`@Update`、`@Delete` 注解中使用 `${}` 处理用户输入
+3. 在 `createNativeQuery()` 或 `createQuery()` 中使用字符串拼接（`+`）或 `String.format()` 嵌入用户输入
+4. 在 `Statement.execute*()` 中直接执行拼接的 SQL（应使用 `PreparedStatement`）
+5. 在 `jdbcTemplate.query/update/execute()` 中使用字符串拼接嵌入用户输入
+6. 在 MyBatis-Plus 的 `.last()` 方法中传入用户输入
+
+## 必须遵循
+
+1. MyBatis 参数一律使用 `#{}` 而非 `${}`
+2. 需要动态 ORDER BY 时，在 Java 端做白名单校验后再传入 `${}`
+3. MyBatis LIKE 查询使用 `CONCAT('%', #{keyword}, '%')` 或 `<bind>` 标签
+4. MyBatis IN 子句使用 `<foreach>` 标签而非 `${}` 拼接
+5. JPA/Hibernate 原生查询使用 `.setParameter()` 绑定参数
+6. JdbcTemplate 使用 `?` 占位符或 `NamedParameterJdbcTemplate` 的 `:name` 占位符
+7. SQL Provider 类中使用 `StringBuilder` 构建 SQL 时，值部分必须用 `#{}`
+
+## 审查触发模式
+
+当你看到以下代码模式时，**主动提醒**用户注意 SQL 注入风险：
+
+- MyBatis XML 中出现 `${`（每一个 `${}` 都是潜在注入点）
+- `createNativeQuery(` 或 `createQuery(` 后跟字符串拼接 `+`
+- `String.format("SELECT` 或 `"SELECT" +`（SQL 字符串拼接）
+- `StringBuilder` / `StringBuffer` 构建含 SQL 关键字的字符串
+- `statement.execute(` / `stmt.executeQuery(` 出现（非 PreparedStatement）
+- `jdbcTemplate.query(sql +` 或 `jdbcTemplate.update(sql +`
+- MyBatis-Plus `.apply("` 后跟 `+` 拼接，或 `.last(` 出现
+- `@SelectProvider` / `@UpdateProvider` 类中的字符串拼接

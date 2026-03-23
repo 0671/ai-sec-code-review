@@ -1,0 +1,50 @@
+---
+description: 当编辑或审查 Ruby/Rails 数据库查询代码时自动激活，提醒 SQL 注入风险
+globs:
+  - "**/app/models/**/*.rb"
+  - "**/app/controllers/**/*.rb"
+  - "**/app/services/**/*.rb"
+  - "**/app/queries/**/*.rb"
+  - "**/app/jobs/**/*.rb"
+  - "**/app/workers/**/*.rb"
+  - "**/app/graphql/**/*.rb"
+  - "**/app/api/**/*.rb"
+  - "**/lib/**/*.rb"
+---
+
+# SQL 注入防护提醒 — Ruby / Rails
+
+当你在匹配文件中编写或审查代码时，请遵循以下约束：
+
+## 绝对禁止
+
+1. 将 `params[:key]` 的值通过**字符串插值（#{}）、+ 拼接、% 格式化**嵌入 SQL 语句
+2. 将用户输入直接传入 `.where("string #{interpolation}")`
+3. 将用户输入直接传入 `.order()`、`.group()`、`.having()` 等方法的字符串参数
+4. 使用 `Arel.sql(params[:key])` 将用户输入标记为"安全 SQL"（这是最危险的误用）
+5. 将用户输入传入 `find_by_sql` / `count_by_sql` 的字符串参数而不使用占位符
+6. 将用户输入传入 `update_all` / `delete_all` 的字符串条件而不使用占位符
+
+## 必须遵循
+
+1. `.where()` 使用占位符或 Hash 条件：`.where("name = ?", val)` 或 `.where(name: val)`
+2. `.order()` 参数必须经过白名单校验（Rails 5.2+ 对原始字符串发出警告）
+3. `find_by_sql` 使用数组形式：`find_by_sql(["... WHERE name = ?", name])`
+4. `update_all` / `delete_all` 使用数组形式：`update_all(["score = score + ?", bonus])`
+5. 动态排序使用 `%w[name email created_at].include?(input)` 白名单
+6. scope 中的 where 条件使用 Hash 形式或占位符
+
+## 审查触发模式
+
+当你看到以下代码模式时，**主动提醒**用户注意 SQL 注入风险：
+
+- `.where("` 后跟 `#{`（Ruby 字符串插值在 where 条件中）
+- `.where("` 后跟 `" +`（字符串拼接在 where 条件中）
+- `.order(params[` 或 `.order("#{`（用户输入控制排序）
+- `Arel.sql(` 后跟变量而非字面量字符串
+- `find_by_sql("` 后跟 `#{`
+- `.execute("` 后跟 `#{`（connection.execute 含插值）
+- `update_all("` 后跟 `#{` 或 `" +`
+- scope lambda 中包含字符串插值的 `.where`
+- `.pluck(Arel.sql(` 后跟变量
+- `.joins("` 后跟 `#{`

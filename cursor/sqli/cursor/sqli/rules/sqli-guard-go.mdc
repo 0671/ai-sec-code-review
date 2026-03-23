@@ -1,0 +1,54 @@
+---
+description: 当编辑或审查 Go 数据库查询代码时自动激活，提醒 SQL 注入风险
+globs:
+  - "**/internal/**/*.go"
+  - "**/pkg/**/*.go"
+  - "**/cmd/**/*.go"
+  - "**/handler/**/*.go"
+  - "**/handlers/**/*.go"
+  - "**/controller/**/*.go"
+  - "**/controllers/**/*.go"
+  - "**/service/**/*.go"
+  - "**/services/**/*.go"
+  - "**/repository/**/*.go"
+  - "**/repositories/**/*.go"
+  - "**/store/**/*.go"
+  - "**/dao/**/*.go"
+  - "**/model/**/*.go"
+  - "**/models/**/*.go"
+  - "**/api/**/*.go"
+  - "**/server/**/*.go"
+---
+
+# SQL 注入防护提醒 — Go
+
+当你在匹配文件中编写或审查代码时，请遵循以下约束：
+
+## 绝对禁止
+
+1. 使用 `fmt.Sprintf` 构建含用户输入的 SQL 语句（Go 中最常见的注入模式）
+2. 使用字符串拼接（`+`）将来自 `r.URL.Query()`、`c.Query()`、`c.Param()` 等的值嵌入 SQL
+3. 将用户输入直接传入 GORM 的 `.Order()`、`.Select()`、`.Group()`、`.Table()` 方法
+4. 将用户输入传入 GORM 的 `.Where()` 且不使用 `?` 占位符
+5. 使用 `strings.Join` 或 `fmt.Sprintf` 构建 IN 子句
+
+## 必须遵循
+
+1. `database/sql` 的 `db.Query/Exec` 使用占位符参数化：`db.Query("... WHERE name = $1", name)`
+2. GORM 的 `.Where()` 使用占位符：`db.Where("name = ?", name)` 或结构体/Map 条件
+3. GORM 的 `.Order()` 参数必须经过白名单校验（GORM 不对 Order 做任何过滤）
+4. GORM 的 `.Raw()` / `.Exec()` 使用占位符：`db.Raw("... WHERE id = ?", id)`
+5. 动态标识符使用 `map[string]string` 白名单映射
+6. 数值类型使用 `strconv.Atoi()` 或 `strconv.ParseInt()` 转换后再使用
+
+## 审查触发模式
+
+当你看到以下代码模式时，**主动提醒**用户注意 SQL 注入风险：
+
+- `fmt.Sprintf("SELECT` / `fmt.Sprintf("INSERT` / `fmt.Sprintf("UPDATE` / `fmt.Sprintf("DELETE`
+- `"SELECT ... " +` 或 `"WHERE ... " +`（SQL 字符串拼接）
+- `.Order(variable)` 且 variable 非字面量字符串
+- `.Where(fmt.Sprintf(` 出现
+- `.Raw(fmt.Sprintf(` 或 `.Exec(fmt.Sprintf(` 出现
+- `.Table(variable)` 且 variable 来自外部输入
+- `%v` 或 `%s` 出现在含 SQL 关键字的 `fmt.Sprintf` 格式串中

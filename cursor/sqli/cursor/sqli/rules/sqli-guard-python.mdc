@@ -1,0 +1,53 @@
+---
+description: 当编辑或审查 Python 数据库查询代码时自动激活，提醒 SQL 注入风险
+globs:
+  - "**/views.py"
+  - "**/views/**/*.py"
+  - "**/models.py"
+  - "**/models/**/*.py"
+  - "**/managers.py"
+  - "**/serializers.py"
+  - "**/serializers/**/*.py"
+  - "**/services/**/*.py"
+  - "**/repositories/**/*.py"
+  - "**/tasks.py"
+  - "**/tasks/**/*.py"
+  - "**/api/**/*.py"
+  - "**/endpoints/**/*.py"
+  - "**/routers/**/*.py"
+  - "**/crud/**/*.py"
+  - "**/db/**/*.py"
+  - "**/queries/**/*.py"
+---
+
+# SQL 注入防护提醒 — Python
+
+当你在匹配文件中编写或审查代码时，请遵循以下约束：
+
+## 绝对禁止
+
+1. 将来自 `request.GET`、`request.POST`、`request.data`、`request.args`、`request.form`、路由参数的值通过 **f-string、str.format()、% 格式化、+ 拼接** 嵌入 SQL 语句
+2. 将用户输入传入 Django 的 `RawSQL()`、`.extra(where=...)`
+3. 将用户输入传入 SQLAlchemy 的 `text()` 构造函数内并使用 f-string 或 format
+4. 将用户输入直接传入 `cursor.execute()` 而不使用参数化占位符
+5. 用用户输入控制 `.order_by()` 参数而不经过白名单校验
+
+## 必须遵循
+
+1. Django `raw()` 使用参数列表：`Model.objects.raw("... WHERE name = %s", [name])`
+2. SQLAlchemy `text()` 使用绑定参数：`text("... WHERE name = :name").bindparams(name=val)`
+3. 原生游标使用参数化：`cursor.execute("... WHERE name = %s", (name,))`（注意元组逗号）
+4. 动态标识符（排序字段、列名）必须通过白名单校验
+5. 使用 Django ORM 的 `F()` 表达式替代 `RawSQL()` 和 `extra()`
+
+## 审查触发模式
+
+当你看到以下代码模式时，**主动提醒**用户注意 SQL 注入风险：
+
+- `f"SELECT ...` / `f"INSERT ...` / `f"UPDATE ...` / `f"DELETE ...`（f-string 含 SQL 关键字）
+- `.raw(` 后跟 f-string 或 `.format(`
+- `cursor.execute(` 后跟 f-string 或 `.format(` 或 `%` 格式化
+- `text(` 后跟 f-string
+- `.order_by(request.` 或 `.order_by(params[`
+- `RawSQL(` 或 `.extra(` 出现在代码中
+- `**{f"{user_input}__...": value}` 动态 ORM lookup
