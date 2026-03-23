@@ -118,6 +118,22 @@ metadata:
  │   │   └─ where: { col: value } / .eq() / .filter() → ✅ 通常安全
  │   │   └─ ⚠️ 但需检查 ORM 版本是否有已知 CVE（对照框架模块 CVE 清单）
  │   │
+ │   ├─ B2. 进入 ORM API 的 order / group / attributes 选项（字符串数组形式）
+ │   │   │   例：findAll({ order: [[userInput, 'ASC']] })
+ │   │   │
+ │   │   ├─ 需确认框架是否对字符串自动 quoteIdentifier()
+ │   │   │   └─ 是（如 Sequelize v6 的 quote() 方法）→ 列名被 "双引号" 包裹，内部 " 转义为 ""
+ │   │   │
+ │   │   ├─ 需确认框架是否对排序方向做白名单校验
+ │   │   │   └─ 是（如 Sequelize 的 validOrderOptions 仅允许 ASC/DESC 等 8 个值）
+ │   │   │
+ │   │   ├─ 若框架同时有 quoteIdentifier + 方向白名单 → ✅ 通常安全
+ │   │   │   └─ 仍建议添加业务白名单作纵深防御（避免暴露内部列名）
+ │   │   │
+ │   │   └─ ⚠️ 关键例外：若用户输入经 literal() / fn() / col() 包装后进入 order
+ │   │       └─ literal() 的输出 **不受** quoteIdentifier 保护 → 视同 C2 处理
+ │   │       └─ 必须查证框架模块中该 API 的具体行为
+ │   │
  │   ├─ C. 进入 SQL 语法结构（字符串拼接/模板插值）
  │   │   │
  │   │   ├─ C1. 进入 WHERE / HAVING 条件
@@ -125,6 +141,7 @@ metadata:
  │   │   │
  │   │   ├─ C2. 进入 ORDER BY / GROUP BY
  │   │   │   └─ 继续 Q4（注意：escape 对标识符无效）
+ │   │   │   └─ ⚠️ 注意区分：通过 ORM API（→ 回到 B2）还是通过原生 SQL / literal()（→ 继续 Q4）
  │   │   │
  │   │   ├─ C3. 进入子查询 / UNION
  │   │   │   └─ 继续 Q4（最高危场景之一）
@@ -308,6 +325,7 @@ grep -rn "UPDATE.*SET\|\.update(\|\.updateMany(" --include="*.{ts,js,py,java,go,
 | 场景 | 为什么通常安全 | 仍需确认 |
 |------|---------------|----------|
 | ORM 链式调用 `.where({ col: value })` | ORM 自动参数化 | ORM 版本是否有已知 CVE |
+| ORM `findAll({ order: [[userInput, 'ASC']] })` 字符串数组 | 多数 ORM 对列名做 `quoteIdentifier()`，对方向做白名单校验（详见判定树 Q3-B2） | 1. 确认框架版本是否有 `quoteIdentifier` 绕过漏洞；2. 确认输入不是通过 `literal()`/`fn()` 包装后进入 order（literal 不受 quote 保护） |
 | 参数化查询但用模板字符串包裹静态 SQL | 插值的是结构而非数据 | 确认 `${}` 内确实是常量 |
 | Migration / Seed 文件中的 raw SQL | 运行一次且无用户输入 | 确认不在生产运行 |
 | 测试文件中的 SQL 拼接 | 测试数据受控 | 确认不在生产代码路径 |
@@ -325,6 +343,26 @@ grep -rn "UPDATE.*SET\|\.update(\|\.updateMany(" --include="*.{ts,js,py,java,go,
 | TypeScript 类型标注为 `number` 但运行时传入 `string` | TS 类型仅编译时检查 |
 | GraphQL 参数经过 schema 类型校验 | schema 校验 `String` 类型仍可含 SQL 载荷 |
 | Request DTO 使用了 `class-validator` | 需确认具体装饰器是否限制 SQL 元字符 |
+| 用户输入经 `literal()`/`fn()` 包装后传入 ORM `order`/`where` 选项 | `literal()` 输出 **绕过** ORM 的 `quoteIdentifier` 保护，等同于原生 SQL 拼接 |
+
+### 6.3 ORM API 层 vs 原生 SQL 层安全边界（关键区分）
+
+> **此节为 v2.1 新增**，源自实际审计误报的教训。
+
+审计时必须区分同一 ORM 框架的两个 API 层级。不同层级对同一类型的用户输入有完全不同的保护：
+
+| API 层级 | 示例 | 标识符保护 | 方向/修饰符保护 | 结论 |
+|----------|------|-----------|----------------|------|
+| **ORM API 层** | `findAll({ order: [[str, str]] })` | ✅ `quoteIdentifier()` 自动转义 | ✅ `validOrderOptions` 白名单 | 通常安全 |
+| **ORM literal 层** | `findAll({ order: [[literal(str), str]] })` | ❌ literal 输出不转义 | ✅ 方向仍有白名单 | ⚠️ literal 内容需审计 |
+| **原生 SQL 层** | `` sequelize.query(`...ORDER BY ${str}`) `` | ❌ 模板字符串无保护 | ❌ 无保护 | 🔴 危险 |
+
+**审计规则**：
+1. 模式命中 `SEQ-ORDER-DYN`（ORM order 选项含动态值）时，先判定是否经 `literal()` 进入
+   - 非 literal（纯字符串）→ 框架有隐式保护 → 降级为 ⚪ 信息（建议纵深防御）
+   - 经 literal() 进入 → 等同原生 SQL → 继续 Q4 净化检查
+2. 模式命中 `SEQ-RAW-TMPL`（原生 query 含模板）时，ORDER BY 位置无保护 → 正常分析流程
+3. 验证请求必须先推演完整的数据处理链（split/replace/toLowerCase 等）→ 确认最终 SQL 语法合法后再出具
 
 ---
 
